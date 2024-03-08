@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Certificate demo, infrastructure for a web instance, Application Loadbalancer, cloudfront distribution and R53 record"
+Parameters:
+  ALBCertificateARN: #Same region as your ALB
+    Type: String
+    Description: Your same region as ALB certificate arn.
+  CDNCertificateARN: #Your N.Virginia certificate
+    Type: String
+    Description: Your N.Virginia certificate arn used for Cloudfront
+  ALBPubSubnetIDs:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets for your Loadbalancer
+  WebPrivateSubnetID: #Determines which availability zone your ec2 will be in
+    Type: AWS::EC2::Subnet::Id
+    Description: PRIVATE subnet for your Web instance(specifies your AvailabilityZone)
+  DomainName:
+    Type: String
+    Description: Should line up with your certificate
+  VPCID:
+    Type: List<AWS::EC2::VPC::Id>
+  WebAMI:
+    Type: AWS::EC2::Image::Id
+    Description: A Amazon Linux AMI ID for the ec2 instance to use
+  VolumeAvailabilityZone: #Needs to be in same Availability zone as your ec2
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: Same region as your EC2 e.g. eu-west-1a,us-east-2b
+  VPCCidr:
+    Type: String
+    Description: In cidr notation e.g. 192.168.0.1/20
+  R53HostedZone:
+    Type: String
+    Description: Apex domain with a additional period(.), into which you will create your record e.g. apexdomain.com.
+Resources:
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+      - WebServerSecurityGroup
+    Properties:
+      GroupDescription: Allows HTTPS access from CloudFront
+      VpcId: !Select [0, !Ref VPCID]
+
+  ALBOutboundRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref WebServerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      GroupId: !Ref ALBSecurityGroup #Security group to attach to
+
+  ALBInboundRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: "0.0.0.0/0"
+      GroupId: !Ref ALBSecurityGroup #Security group to attach to
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: web-alb
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets: 
+        - !Select [0, !Ref ALBPubSubnetIDs]
+        - !Select [1, !Ref ALBPubSubnetIDs]
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !GetAtt ALB.LoadBalancerArn
+      Protocol: HTTPS
+      Port: 443
+      Certificates: 
+        - CertificateArn: !Ref ALBCertificateARN
+      SslPolicy: "ELBSecurityPolicy-TLS13-1-2-FIPS-2023-04" #recommended policy by AWS
+      DefaultActions:
+        - Type: "forward"
+          TargetGroupArn: !GetAtt TargetGroup.TargetGroupArn
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !Select [0, !Ref VPCID]
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Targets:
+        - Id: !Ref WebInstance
+          Port: 80
+
+  # EC2 Web Instance (Private)
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref WebAMI
+      InstanceType: t3.micro
+      SubnetId: !Ref WebPrivateSubnetID
+      UserData: !Base64 |
+        #!/bin/bash -xe
+        yum update -y
+        yum install -y httpd amazon-ssm-agent
+        systemctl start httpd
+        systemctl enable httpd
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: MyWebInstance
+
+  Volume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref VolumeAvailabilityZone
+      VolumeType: gp3
+      Size: 8
+
+  VolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdk
+      InstanceId: !Ref WebInstance
+      VolumeId: !Ref Volume
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows internal ALB access
+      VpcId: !Select [0, !Ref VPCID]
+
+  WebSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      SourceSecurityGroupId: !Ref ALBSecurityGroup
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: TCP
+      GroupId: !Ref WebServerSecurityGroup #Security group to attach to
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt ALB.DNSName
+            Id: ALB-Origin
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: 
+                - TLSv1.2
+        Aliases:
+          - !Ref DomainName
+        HttpVersion: http2
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CDNCertificateARN
+          MinimumProtocolVersion: TLSv1.2_2021
+          SslSupportMethod: sni-only
+        Enabled: true
+        DefaultCacheBehavior: 
+          AllowedMethods:
+            - HEAD
+            - GET
+          TargetOriginId: ALB-Origin
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad #managed policy from aws (no cache)
+          OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc #managed policy (pass all headers)
+        PriceClass: PriceClass_100
+  
+  MyRecord:
+    Type: 'AWS::Route53::RecordSet'
+    DependsOn: CloudFrontDistribution
+    Properties:
+      HostedZoneName: !Ref R53HostedZone
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2 #A set/constant value for cloudfront distributions
+        DNSName: !GetAtt 
+          - CloudFrontDistribution
+          - DomainName
+Outputs:
+  ExportALB:
+    Description: Information about the value
+    Value: !GetAtt ALB.LoadBalancerArn
+    Export:
+      Name: ALB
+  ExportHttpList:
+    Description: Information about the value
+    Value: !Ref HttpsListener
+    Export:
+      Name: Listener
+  ExportDomain:
+    Description: Information about the value
+    Value: !Ref DomainName
+    Export:
+      Name: Domain
+## comment
