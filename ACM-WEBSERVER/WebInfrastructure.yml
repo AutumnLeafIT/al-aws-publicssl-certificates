@@ -12,10 +12,10 @@ Parameters:
     Description: Public subnets for your Loadbalancer
   WebPrivateSubnetID: #Determines which availability zone your ec2 will be in
     Type: AWS::EC2::Subnet::Id
-    Description: PRIVATE subnet for your Web instance(specifies your AvailabilityZone)
+    Description: PRIVATE subnet for your Web instance(specifies your EC2 AvailabilityZone)
   DomainName:
     Type: String
-    Description: Should line up with your certificate
+    Description: Your URL name, same as your certificates your registered. e.g. mypage.mywebsite.com, mywebsite.com
   VPCID:
     Type: List<AWS::EC2::VPC::Id>
   WebAMI:
@@ -29,7 +29,7 @@ Parameters:
     Description: In cidr notation e.g. 192.168.0.1/20
   R53HostedZone:
     Type: String
-    Description: Apex domain with a additional period(.), into which you will create your record e.g. apexdomain.com.
+    Description: Apex domain, into which you will create your record e.g. apexdomain.com
 Resources:
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -178,7 +178,7 @@ Resources:
     Type: 'AWS::Route53::RecordSet'
     DependsOn: CloudFrontDistribution
     Properties:
-      HostedZoneName: !Ref R53HostedZone
+      HostedZoneName: !Join ["", [!Ref R53HostedZone, "."]]
       Name: !Ref DomainName
       Type: A
       AliasTarget:
