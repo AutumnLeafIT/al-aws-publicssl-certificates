@@ -54,7 +54,7 @@ Resources:
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
-      CidrIp: "0.0.0.0/0"
+      SourcePrefixListId: pl-4fa04526 #managed list of cloudfront IPs allowing only inbound from cloudfront
       GroupId: !Ref ALBSecurityGroup #Security group to attach to
 
   ALB:
