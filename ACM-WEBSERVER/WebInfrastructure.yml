@@ -88,9 +88,12 @@ Resources:
       TargetType: instance
       VpcId: !Select [0, !Ref VPCID]
       HealthCheckProtocol: HTTP
-      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
+      Port: 80
+      HealthCheckPath: /health
       Targets:
         - Id: !Ref WebInstance
           Port: 80
@@ -108,6 +111,18 @@ Resources:
         yum install -y httpd amazon-ssm-agent
         systemctl start httpd
         systemctl enable httpd
+        echo "Alias /health /var/www/html/health.html" >> /etc/httpd/conf/httpd.conf
+        touch /var/www/html/health.html
+        cat << EOF > "/var/www/html/health.html"
+        <html>
+        <head>
+        <title>Application Health</title>
+        </head>
+        <body>
+          <h1>Application is Healthy</h1>
+        </body>
+        </html>
+        EOF
       SecurityGroupIds:
         - !Ref WebServerSecurityGroup
       Tags:
