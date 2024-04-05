@@ -83,7 +83,6 @@ Resources:
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Port: 80
       Protocol: HTTP
       TargetType: instance
       VpcId: !Select [0, !Ref VPCID]
