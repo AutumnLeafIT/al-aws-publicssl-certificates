@@ -1,0 +1,21 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "This Script will deploy the required certificate for the WebServer solution"
+Parameters:
+  RegisteredDomainName:
+    Type: String
+    Description: Enter the domain name created in the previous steps (eg.. firstname+alblogsdomain.com)
+  RegisteredDomainHostedZoneId:
+    Type: String
+    Description: The ID for the domain created in previous steps (eg.. Z0123456789000SW)
+  
+Resources:
+  HostRegionCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref RegisteredDomainName
+      DomainValidationOptions:
+        - DomainName: !Ref RegisteredDomainName
+          HostedZoneId: !Ref RegisteredDomainHostedZoneId
+      ValidationMethod: DNS
+      SubjectAlternativeNames:
+        - !Join [".",["*",!Ref RegisteredDomainName]]
