@@ -1,36 +1,35 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: "Certificate demo, infrastructure for a web instance, Application Loadbalancer, cloudfront distribution and R53 record"
 Parameters:
-  ALBCertificateARN: #Same region as your ALB
+################################## Parameters ##################################
+  ALBCertificateARN:
     Type: String
-    Description: Your same region as ALB certificate arn.
-  CDNCertificateARN: #Your N.Virginia certificate
+    Description: Certificate arn, created in the same region as you are deploying this stack.
+  CDNCertificateARN:
     Type: String
-    Description: Your N.Virginia certificate arn used for Cloudfront
+    Description: Certficate arn, created in the US East(N.Virginia) for Cloudfront(Global).
   ALBPubSubnetIDs:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Public subnets for your Loadbalancer
-  WebPrivateSubnetID: #Determines which availability zone your ec2 will be in
+  WebPrivateSubnetID:
     Type: AWS::EC2::Subnet::Id
     Description: PRIVATE subnet for your Web instance(specifies your EC2 AvailabilityZone)
   DomainName:
     Type: String
-    Description: Your URL name, same as your certificates your registered. e.g. mypage.mywebsite.com, mywebsite.com
+    Description: Your URL name with prefix if wildcard(*) is created, as your certificates you registered e.g. mypage.mywebsite.com, mywebsite.com .
   VPCID:
     Type: List<AWS::EC2::VPC::Id>
   WebAMI:
     Type: AWS::EC2::Image::Id
-    Description: A Amazon Linux AMI ID for the ec2 instance to use
-  VolumeAvailabilityZone: #Needs to be in same Availability zone as your ec2
-    Type: AWS::EC2::AvailabilityZone::Name
-    Description: Same region as your EC2 e.g. eu-west-1a,us-east-2b
-  VPCCidr:
+    Description: A Amazon Linux 1/2 AMI ID for the ec2 instance to use
+  YourName:
     Type: String
-    Description: In cidr notation e.g. 192.168.0.1/20
+    Description: Your name or email address for tagging and finding tracking resources under the OWNER tag.
   R53HostedZone:
     Type: String
     Description: Apex domain, into which you will create your record e.g. apexdomain.com
 Resources:
+################################## Resources ##################################
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     DependsOn:
@@ -60,12 +59,15 @@ Resources:
   ALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: web-alb
+      Name: web-cert-alb
       SecurityGroups:
         - !Ref ALBSecurityGroup
       Subnets: 
         - !Select [0, !Ref ALBPubSubnetIDs]
         - !Select [1, !Ref ALBPubSubnetIDs]
+      Tags:
+        - Key: OWNER
+          Value: !Ref YourName
 
   HttpsListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -97,56 +99,115 @@ Resources:
         - Id: !Ref WebInstance
           Port: 80
 
-  # EC2 Web Instance (Private)
+  WebLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref WebAMI
+        InstanceType: t3.micro
+        IamInstanceProfile:
+          Name: !Ref WebInstanceProfile
+        NetworkInterfaces:
+        - SubnetId: !Ref WebPrivateSubnetID
+          Groups:
+            - !Ref WebServerSecurityGroup
+          DeviceIndex: 0
+          AssociatePublicIpAddress: false
+        MetadataOptions:
+          HttpTokens: "required" #Sets IMDSv2 to required
+          #Installs SSM agent to connect/jump into the instance, httpd(Apache) web software and creates a health pages for the ALB health check
+        UserData: !Base64 |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y httpd
+          echo "Alias /health /var/www/html/health.html" >> /etc/httpd/conf/httpd.conf
+          touch /var/www/html/health.html
+          cat << EOF > "/var/www/html/health.html"
+          <html>
+          <head>
+          <title>Application Health</title>
+          </head>
+          <body>
+            <h1>Application is Healthy</h1>
+          </body>
+          </html>
+          EOF
+          echo "Alias / /var/www/html/home.html" >> /etc/httpd/conf/httpd.conf
+          touch /var/www/html/home.html
+          cat << EOF > "/var/www/html/home.html"
+          <html>
+          <head>
+          <title>Application Health</title>
+          </head>
+          <body>
+            <h1>It works, you have created a secure website!</h1>
+          </body>
+          </html>
+          EOF
+          systemctl start httpd
+          systemctl enable httpd
+          cd /tmp
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+        BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3 
+        TagSpecifications:
+        - ResourceType: instance
+          Tags:
+          - Key: description
+            Value: ssltestwithwebinstance
+          - Key: OWNER
+            Value: !Ref YourName
+          - Key: Name
+            Value: SslTestWebInstance
+        - ResourceType: volume
+          Tags:
+          - Key: description
+            Value: ssltestwithwebinstance
+          - Key: OWNER
+            Value: !Ref YourName
+  WebInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: InstanceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+  WebInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: '/'
+      Roles:
+      - !Ref WebInstanceRole
+
   WebInstance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: !Ref WebAMI
-      InstanceType: t3.micro
-      SubnetId: !Ref WebPrivateSubnetID
-      UserData: !Base64 |
-        #!/bin/bash -xe
-        yum update -y
-        yum install -y httpd amazon-ssm-agent
-        systemctl start httpd
-        systemctl enable httpd
-        echo "Alias /health /var/www/html/health.html" >> /etc/httpd/conf/httpd.conf
-        touch /var/www/html/health.html
-        cat << EOF > "/var/www/html/health.html"
-        <html>
-        <head>
-        <title>Application Health</title>
-        </head>
-        <body>
-          <h1>Application is Healthy</h1>
-        </body>
-        </html>
-        EOF
-      SecurityGroupIds:
-        - !Ref WebServerSecurityGroup
-      Tags:
-        - Key: Name
-          Value: MyWebInstance
-
-  Volume:
-    Type: AWS::EC2::Volume
-    Properties:
-      AvailabilityZone: !Ref VolumeAvailabilityZone
-      VolumeType: gp3
-      Size: 8
-
-  VolumeAttachment:
-    Type: AWS::EC2::VolumeAttachment
-    Properties:
-      Device: /dev/sdk
-      InstanceId: !Ref WebInstance
-      VolumeId: !Ref Volume
+      LaunchTemplate:
+        LaunchTemplateId: !GetAtt WebLaunchTemplate.LaunchTemplateId
+        Version: !GetAtt WebLaunchTemplate.LatestVersionNumber
 
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Allows internal ALB access
       VpcId: !Select [0, !Ref VPCID]
+      Tags:
+      - Key: OWNER
+        Value: !Ref YourName
 
   WebSecurityGroupIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -162,15 +223,15 @@ Resources:
     Properties:
       DistributionConfig:
         Origins:
-          - DomainName: !GetAtt ALB.DNSName
-            Id: ALB-Origin
-            CustomOriginConfig:
-              HTTPSPort: 443
-              OriginProtocolPolicy: https-only
-              OriginSSLProtocols: 
-                - TLSv1.2
+        - DomainName: !GetAtt ALB.DNSName
+          Id: ALB-Origin
+          CustomOriginConfig:
+            HTTPSPort: 443
+            OriginProtocolPolicy: https-only
+            OriginSSLProtocols: 
+            - TLSv1.2
         Aliases:
-          - !Ref DomainName
+        - !Ref DomainName
         HttpVersion: http2
         ViewerCertificate:
           AcmCertificateArn: !Ref CDNCertificateARN
@@ -187,10 +248,12 @@ Resources:
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad #managed policy from aws (no cache)
           OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc #managed policy (pass all headers)
         PriceClass: PriceClass_100
+      Tags:
+      - Key: OWNER
+        Value: !Ref YourName
   
   MyRecord:
     Type: 'AWS::Route53::RecordSet'
-    DependsOn: CloudFrontDistribution
     Properties:
       HostedZoneName: !Join ["", [!Ref R53HostedZone, "."]]
       Name: !Ref DomainName
@@ -200,20 +263,5 @@ Resources:
         DNSName: !GetAtt 
           - CloudFrontDistribution
           - DomainName
-Outputs:
-  ExportALB:
-    Description: Information about the value
-    Value: !GetAtt ALB.LoadBalancerArn
-    Export:
-      Name: ALB
-  ExportHttpList:
-    Description: Information about the value
-    Value: !Ref HttpsListener
-    Export:
-      Name: Listener
-  ExportDomain:
-    Description: Information about the value
-    Value: !Ref DomainName
-    Export:
-      Name: Domain
-## comment
+
+################################## End of File ##################################
