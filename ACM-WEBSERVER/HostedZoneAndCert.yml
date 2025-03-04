@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "This Script will deploy the required certificate for the WebServer solution"
+Description: "This Script will deploy the required certificate for the WebServer solution provided by Autumn Leaf IT (https://www.al.co.za)"
 Parameters:
   RegisteredDomainName:
     Type: String

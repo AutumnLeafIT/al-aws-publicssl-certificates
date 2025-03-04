@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Certificate demo, infrastructure for a web instance, Application Loadbalancer, cloudfront distribution and R53 record"
+Description: "Certificate demo provided by Autumn Leaf IT (https://www.al.co.za), infrastructure for a web instance, Application Loadbalancer, cloudfront distribution and R53 record"
 Parameters:
 ################################## Parameters ##################################
   ALBCertificateARN:
