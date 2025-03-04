@@ -1,0 +1,1 @@
+This repository is for  the article The Essential Guide to Public SSL Certificates in AWS: A Recipe for Secure and Trusted Web Applications provided by Autumn Leaf IT. Please go to https://www.al.co.za to read it and see how to use these scripts.
